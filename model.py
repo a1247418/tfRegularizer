@@ -13,6 +13,19 @@ class ModelType(Enum):
     free_running = 4
 
 
+class Mode(Enum):
+    train = 1
+    validate = 2
+    test = 3
+
+    def to_string(mode):
+        if mode == Mode.train: string = "Train"
+        elif mode == Mode.validate: string = "Validate"
+        elif mode == Mode.test: string = "Test"
+        else: raise ValueError(mode, 'is not a valid training mode.')
+        return string
+
+
 class SeqModel(object):
     def __init__(self, is_training, config, dataset):
         self._is_training = is_training
@@ -173,7 +186,6 @@ class SeqModel(object):
     def dataset(self):
         return self._dataset
 
-
     @property
     def batch_size(self):
         return self._batch_size
@@ -181,6 +193,10 @@ class SeqModel(object):
     @property
     def cost(self):
         return self._cost
+
+    @property
+    def normalized_cost(self):
+        return self._normalized_cost
 
     @property
     def final_state(self):
@@ -206,3 +222,30 @@ class SeqModel(object):
     @property
     def final_state_name(self):
         return self._final_state_name
+
+
+class ModelInput(object):
+    """Encapsulates parameters and data."""
+    def __init__(self, config, data, name = None):
+        self.batch_size = batch_size = config.batch_size
+        self.dataset = ModelInput._prepare_data(data, batch_size)
+        self.iterator = self.dataset.make_initializable_iterator()
+        self.next_element = self.iterator.get_next()
+
+    @staticmethod
+    def _prepare_data(data, batch_size):
+        """Takes data array and returns a batched, 0-padded and shuffled dataset."""
+        print("Preparing data set.")
+
+        def data_generator():
+            for element in data: yield element
+
+        dataset = tf.data.Dataset().from_generator(data_generator, output_types=data_type())
+        dataset = dataset.shuffle(buffer_size=10000, seed=64, reshuffle_each_iteration=True)
+        # dataset = dataset.repeat(num_epochs)
+        dataset = dataset.padded_batch(batch_size, padded_shapes=[None])
+        dataset = dataset.prefetch(max(2, tf.contrib.data.AUTOTUNE))   # must be the last operaton of the pipeline
+
+        print("Done preparing data set.")
+
+        return dataset
