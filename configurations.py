@@ -1,53 +1,31 @@
-from model import ModelType
+
+import re
 import numpy as np
+from model import ModelType
 
 
-class DefaultConfig(object):
-    init_scale = 0.1
-    learning_rate = 0.8
-    max_grad_norm = 3
-    num_layers = 1
-    hidden_size = 2
-    max_epoch = 5  # nr epochs with max learning rate
-    max_max_epoch = 30
-    keep_prob = 0.8
-    lr_decay = 0.9
-    batch_size = 64
-    vocab_size = 29
-    learning_mode = ModelType.tf
-
-
-class GridSearchConfig(object):
-    init_scale = 0.1
-    learning_rate = np.arange(0.7, 1, 0.1)
-    max_grad_norm = np.arange(3, 5, 1)
-    num_layers = np.arange(1, 3, 1)
-    hidden_size = 2
-    max_epoch = 3  # nr epochs with max learning rate
-    max_max_epoch = 15
-    keep_prob = 0.8
-    lr_decay = 0.9
-    batch_size = [64, 128]
-    vocab_size = 29
-    learning_mode = ModelType.tf
-
-
-class Configuration(object):
+class Config(object):
     def __init__(self):
         self.parameters = {
-            "init_scale": 0.1,
-            "learning_rate": np.arange(0.7, 1, 0.1),
-            "max_grad_norm": np.arange(3, 5, 1),
-            "num_layers": np.arange(1, 3, 1),
-            "hidden_size": 2,
-            "max_epoch": 3,  # nr epochs with max learning rate
-            "max_max_epoch": 15,
-            "keep_prob": 0.8,
-            "lr_decay": 0.9,
-            "batch_size": [64, 128],
-            "vocab_size": 29,
-            "learning_mode": ModelType.tf
+            "init_scale": None,
+            "learning_rate": None,
+            "max_grad_norm": None,
+            "num_layers": None,
+            "hidden_size": None,
+            "max_epoch": None,  # nr epochs with max learning rate
+            "max_max_epoch": None,
+            "keep_prob": None,
+            "lr_decay": None,
+            "batch_size": None,
+            "vocab_size": None,
+            "learning_mode": None
         }
+
+    def to_string(self):
+        string = str(self.parameters)
+        rgx = re.compile("['{} ]")
+        string = rgx.sub("", string)
+        return string
 
     @property
     def init_scale(self):
@@ -144,3 +122,37 @@ class Configuration(object):
     @learning_mode.setter
     def learning_mode(self, learning_mode):
         self.parameters["learning_mode"] = learning_mode
+
+
+class DefaultConfig(Config):
+    def __init__(self):
+        Config.__init__(self)
+        self.init_scale = 0.1
+        self.learning_rate = 0.8
+        self.max_grad_norm = 3
+        self.num_layers = 1
+        self.hidden_size = 2
+        self.max_epoch = 5
+        self.max_max_epoch = 30
+        self.keep_prob = 0.8
+        self.lr_decay = 0.9
+        self.batch_size = 64
+        self.vocab_size = 29
+        self.learning_mode = ModelType.tf
+
+
+class GridSearchConfig(Config):
+    def __init__(self):
+        Config.__init__(self)
+        self.init_scale = 0.1
+        self.learning_rate = np.arange(0.7, 1, 0.1)
+        self.max_grad_norm = np.arange(3, 5, 1)
+        self.num_layers = np.arange(1, 3, 1)
+        self.hidden_size = 2
+        self.max_epoch = 3
+        self.max_max_epoch = 2 #TODO: change
+        self.keep_prob = 0.8
+        self.lr_decay = 0.9
+        self.batch_size = [64, 128]
+        self.vocab_size = 29
+        self.learning_mode = ModelType.tf

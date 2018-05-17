@@ -6,12 +6,13 @@ https://github.com/tensorflow/models/blob/master/tutorials/rnn/ptb/*.py
 import os
 import time
 import copy
+import collections
 from enum import Enum
 import numpy as np
 import tensorflow as tf
 import dataReader
 from model import SeqModel, ModelType, ModelInput, Mode
-from configurations import *
+from configurations import Config, DefaultConfig, GridSearchConfig
 from tensorflow.python.training.summary_io import SummaryWriterCache
 from tensorflow.python import debug as tf_debug
 
@@ -45,11 +46,8 @@ def get_time_str():
 
 def run_epoch(sess, model, writer=None, summary_op=None, eval_op=None):
     """Run throught the whole dataset once."""
-    if PRINT_OUT: print("Start running epoch.")
-
     sess.run(model.dataset.iterator.initializer)
 
-    # start_time = get_time_str()
     costs = 0.0
     total_steps = 0
 
@@ -75,7 +73,7 @@ def run_epoch(sess, model, writer=None, summary_op=None, eval_op=None):
             # Fetch next batch
             example_batch = sess.run(model.dataset.next_element)
         except tf.errors.OutOfRangeError:
-            print("Processed", step, "batches.")
+            # Break out of loop if there is no more batch in the dataset
             break
 
         # num_steps = example_batch.shape[1]
@@ -137,7 +135,7 @@ def instantiate_model(mode, config, data_set, reuse):
             config=config,
             data=data_set,
             name=name+"Input")
-        with tf.variable_scope("Model", reuse=reuse, initializer=initializer):
+        with tf.variable_scope("Model", reuse=tf.AUTO_REUSE, initializer=initializer):
             model = SeqModel(
                 is_training=(mode == Mode.train),
                 config=config,
@@ -151,28 +149,57 @@ def instantiate_model(mode, config, data_set, reuse):
     return model, summary
 
 
-def search_params(config, train_set, validation_set):
+def search_params(base_config, train_set, validation_set):
     """
     Performs grid search over the value ranges in the reference configuration.
-    :param config: Reference configuration with ranges as parameter values.
+    :param base_config: Reference configuration with ranges as parameter values.
     :param train_set: Dataset to use for training.
     :param validation_set: Dataset to use for validation.
     :return: Configuration with smallest validation loss.
     """
-    #Generate configs to be tested
+    # Generate configs to be tested
+    params = base_config.parameters
+    configs = [Config()]
 
-    configs = []
-    score = []
+    for param in params:
+        param_content = base_config.parameters[param]
+        if isinstance(param_content, collections.Iterable):  # Check if the parameter is to be varied
+            nr_configs = len(configs)
+            for configID in range(nr_configs):
+                for value in param_content:
+                    new_config = copy.deepcopy(configs[0])
+                    new_config.parameters[param] = value
+                    configs.append(new_config)
+                configs.pop(0)
+        else:
+            for config in configs:
+                config.parameters[param] = base_config.parameters[param]
 
+    print("Generated", len(configs), "parameter configurations:")
+    for config in configs:
+        print(config.to_string())
+
+    # Train and validate configs
     best_config = None
     best_loss = float("inf")
 
+    counter = 0
     for config in configs:
+        counter += 1
+        print("\n############################### Running Configuration", counter, "of ", len(configs))
         mtrain, train_summary_op = instantiate_model(
             mode=Mode.train,
             config=config,
             data_set=train_set,
-            reuse=True)
+            reuse=False)
+
+        # Wipe models
+        g_init_op = tf.global_variables_initializer()
+        l_init_op = tf.global_variables_initializer()
+        with tf.train.MonitoredTrainingSession() as session:
+            session.run(g_init_op)
+            session.run(l_init_op)
+
         run_loop([Mode.train], [mtrain], [train_summary_op], log=True, save=False)
 
         validation_config = copy.deepcopy(config)
@@ -182,14 +209,19 @@ def search_params(config, train_set, validation_set):
             mode=Mode.validate,
             config=validation_config,
             data_set=validation_set,
-            reuse=False)
-        config_loss = run_loop([Mode.train], [mtrain], [train_summary_op], log=True, save=False)[0][0]
+            reuse=True)
+
+        config_loss = run_loop([Mode.validate], [mvalid], [val_summary_op], log=True, save=False)[0][0]
 
         if best_loss > config_loss:
             best_config = config
             best_loss = config_loss
+            print("Best loss:", best_loss)
+            print("Best config:", best_config.to_string())
 
-    return  best_config
+
+    return best_config
+
 
 def run_loop(modes, models, summary_ops=None, log=False, save=False):
     """
@@ -203,15 +235,20 @@ def run_loop(modes, models, summary_ops=None, log=False, save=False):
     """
     assert (len(modes) == len(models))
     assert (summary_ops is None or len(summary_ops) == len(models))
-    assert (summary_ops is None or log == True)
+    assert (summary_ops is None or log)
 
     nr_models = len(modes)
     representative_config = models[0].config  # used for variables that are assumed to be the same between models
 
+    # Create hooks for session
+    hooks = []
+
     # Saver hook that allows the monitored session to automatically create checkpoints
-    saver_hook = tf.train.CheckpointSaverHook(checkpoint_dir=save_path, save_steps=10000) if save else None
-    # summary_hook = tf.train.SummarySaverHook(output_dir=logs_path, summary_op=train_summary_op, save_secs=10)
-    with tf.train.MonitoredTrainingSession(hooks=[saver_hook]) as session:
+    if save:
+        saver_hook = tf.train.CheckpointSaverHook(checkpoint_dir=save_path, save_steps=10000)
+        hooks.append(saver_hook)
+
+    with tf.train.MonitoredTrainingSession(hooks=hooks) as session:
         # session = tf_debug.LocalCLIDebugWrapperSession(session)  # Enable debug
 
         writers = []
@@ -229,14 +266,15 @@ def run_loop(modes, models, summary_ops=None, log=False, save=False):
 
             for m in range(nr_models):
                 model = models[m]
-                model.assign_lr(session, representative_config.learning_rate * lr_decay)
-                print("Epoch: %d Learning rate: %.3f" % (i + 1, session.run(model.lr)))
+                if modes[m] == Mode.train:
+                    model.assign_lr(session, representative_config.learning_rate * lr_decay)
+                    print("Epoch: %d Learning rate: %.3f" % (i + 1, session.run(model.lr)))
                 perplexity = run_epoch(session, model,
                                        writer=writers[m],
                                        summary_op=summary_ops[m],
                                        eval_op=model.train_op if modes[m] == Mode.train else None)
                 losses[m].append(perplexity)
-                print("Epoch: %d ", modes[m], " Perplexity: %.3f" % (i + 1, perplexity))
+                print("Epoch: %d Perplexity: %.3f" % (i + 1, perplexity))
 
         if save:
             print("Saving model to %s." % save_path)
@@ -257,7 +295,7 @@ def main(_):
     with tf.Graph().as_default():
         config = search_params(GridSearchConfig(), train_set, validation_set)
 
-        if(False):  # Train & test
+        if False:  # Train & test
             mtrain, train_summary_op = instantiate_model(
                 mode=Mode.train,
                 config=config,

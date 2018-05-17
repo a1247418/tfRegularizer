@@ -31,6 +31,7 @@ class SeqModel(object):
         self._is_training = is_training
         self._dataset = dataset
         self._batch_size = tf.placeholder(tf.int32, shape=[], name="batch_size")
+        self._config = config
         hidden_size = config.hidden_size
         vocab_size = config.vocab_size
         self._batch = tf.placeholder(tf.int32, shape=(None, None))  # Holds symbol IDs: [batch_size, num_steps]
@@ -89,7 +90,6 @@ class SeqModel(object):
 
         # Optimize, if is_training
         if is_training:
-            # TODO: Why is learning rate st to 0?
             self._lr = tf.Variable(0.0, trainable=False)
             tvars = tf.trainable_variables()
             grads, _ = tf.clip_by_global_norm(tf.gradients(self._cost, tvars),
@@ -103,16 +103,16 @@ class SeqModel(object):
                 tf.float32, shape=[], name="new_learning_rate")
             self._lr_update = tf.assign(self._lr, self._new_lr)
 
-    def _get_lstm_cell(self, config, is_training):
+    def _get_lstm_cell(self, config):
         # Forget bias set to 1
         return tf.contrib.rnn.BasicLSTMCell(
             config.hidden_size, forget_bias=1.0, state_is_tuple=True,
-            reuse=not is_training)
+            reuse=tf.AUTO_REUSE)
         
     def _build_rnn_graph_lstm(self, inputs, config, is_training):
         """Build the inference graph using canonical LSTM cells."""
         def make_cell():
-            cell = self._get_lstm_cell(config, is_training)
+            cell = self._get_lstm_cell(config)
             if is_training and config.keep_prob < 1:
                 cell = tf.contrib.rnn.DropoutWrapper(
                     cell, output_keep_prob=config.keep_prob)
@@ -223,6 +223,9 @@ class SeqModel(object):
     def final_state_name(self):
         return self._final_state_name
 
+    @property
+    def config(self):
+        return self._config
 
 class ModelInput(object):
     """Encapsulates parameters and data."""
