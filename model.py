@@ -60,10 +60,8 @@ class SeqModel(object):
         # Reshape logits to be a 3-D tensor for sequence loss
         logits = tf.reshape(logits, [self._batch_size, num_steps, vocab_size])
 
-        # TODO: Here: introduce interpolation
-
         # batch should be [batch_size, num_steps]. It needs to be shifted by 1 for targets.
-        targets = tf.concat([self._batch[:,1:], tf.zeros(shape=(tf.shape(self._batch)[0], 1), dtype=tf.int32)], axis=1)
+        targets = tf.concat([self._batch[:, 1:], tf.zeros(shape=(tf.shape(self._batch)[0], 1), dtype=tf.int32)], axis=1)
         # Use the contrib sequence loss and average over the batches
         loss = tf.contrib.seq2seq.sequence_loss(
             logits,
@@ -71,6 +69,7 @@ class SeqModel(object):
             tf.ones([self._batch_size, num_steps], dtype=data_type()),  # weights
             average_across_timesteps=False,
             average_across_batch=False)
+
         # Masking - loss will be averaged over steps num_steps_in_batch outside of this function
         mask = tf.cast(tf.sign(tf.abs(targets)), tf.float32)  # Length of each seq
         masked_loss = tf.multiply(loss, mask)  # Multiply element-wise unwanted loss with 0
@@ -103,16 +102,16 @@ class SeqModel(object):
                 tf.float32, shape=[], name="new_learning_rate")
             self._lr_update = tf.assign(self._lr, self._new_lr)
 
-    def _get_lstm_cell(self, config):
+    def _get_lstm_cell(self, config, is_training):
         # Forget bias set to 1
         return tf.contrib.rnn.BasicLSTMCell(
             config.hidden_size, forget_bias=1.0, state_is_tuple=True,
-            reuse=tf.AUTO_REUSE)
+            reuse=not is_training)
         
     def _build_rnn_graph_lstm(self, inputs, config, is_training):
         """Build the inference graph using canonical LSTM cells."""
         def make_cell():
-            cell = self._get_lstm_cell(config)
+            cell = self._get_lstm_cell(config, is_training)
             if is_training and config.keep_prob < 1:
                 cell = tf.contrib.rnn.DropoutWrapper(
                     cell, output_keep_prob=config.keep_prob)

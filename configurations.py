@@ -68,19 +68,19 @@ class Config(object):
         self.parameters["hidden_size"] = hidden_size
 
     @property
-    def max_epoch(self):
+    def nr_epochs_with_max_lr(self):
         return self.parameters["max_epoch"]
 
-    @max_epoch.setter
-    def max_epoch(self, max_epoch):
+    @nr_epochs_with_max_lr.setter
+    def nr_epochs_with_max_lr(self, max_epoch):
         self.parameters["max_epoch"] = max_epoch
 
     @property
-    def max_max_epoch(self):
+    def nr_epochs(self):
         return self.parameters["max_max_epoch"]
 
-    @max_max_epoch.setter
-    def max_max_epoch(self, max_max_epoch):
+    @nr_epochs.setter
+    def nr_epochs(self, max_max_epoch):
         self.parameters["max_max_epoch"] = max_max_epoch
 
     @property
@@ -132,8 +132,8 @@ class DefaultConfig(Config):
         self.max_grad_norm = 3
         self.num_layers = 1
         self.hidden_size = 2
-        self.max_epoch = 5
-        self.max_max_epoch = 30
+        self.nr_epochs_with_max_lr = 5
+        self.nr_epochs = 30
         self.keep_prob = 0.8
         self.lr_decay = 0.9
         self.batch_size = 64
@@ -149,8 +149,8 @@ class GridSearchConfig(Config):
         self.max_grad_norm = np.arange(3, 5, 1)
         self.num_layers = np.arange(1, 3, 1)
         self.hidden_size = 2
-        self.max_epoch = 3
-        self.max_max_epoch = 2 #TODO: change
+        self.nr_epochs_with_max_lr = 3
+        self.nr_epochs = 5
         self.keep_prob = 0.8
         self.lr_decay = 0.9
         self.batch_size = [64, 128]

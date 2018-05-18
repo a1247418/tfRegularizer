@@ -186,24 +186,15 @@ def search_params(base_config, train_set, validation_set):
     counter = 0
     for config in configs:
         counter += 1
-        print("\n############################### Running Configuration", counter, "of ", len(configs))
+        print("\n############################### Running Configuration", counter, "of ", len(configs), "###############################")
         mtrain, train_summary_op = instantiate_model(
             mode=Mode.train,
             config=config,
             data_set=train_set,
             reuse=False)
 
-        # Wipe models
-        g_init_op = tf.global_variables_initializer()
-        l_init_op = tf.global_variables_initializer()
-        with tf.train.MonitoredTrainingSession() as session:
-            session.run(g_init_op)
-            session.run(l_init_op)
-
-        run_loop([Mode.train], [mtrain], [train_summary_op], log=True, save=False)
-
         validation_config = copy.deepcopy(config)
-        validation_config.max_max_epoch = 1
+        validation_config.nr_epochs = 1
 
         mvalid, val_summary_op = instantiate_model(
             mode=Mode.validate,
@@ -211,7 +202,13 @@ def search_params(base_config, train_set, validation_set):
             data_set=validation_set,
             reuse=True)
 
-        config_loss = run_loop([Mode.validate], [mvalid], [val_summary_op], log=True, save=False)[0][0]
+        g_init = tf.global_variables_initializer()
+        l_init = tf.local_variables_initializer()
+        with tf.train.MonitoredTrainingSession() as session:
+            # session = tf_debug.LocalCLIDebugWrapperSession(session)  # Enable debug
+            session.run([g_init, l_init])
+            run_loop(session, [Mode.train], [mtrain], [train_summary_op], log=True, save=False)
+            config_loss = run_loop(session, [Mode.validate], [mvalid], [val_summary_op], log=True, save=False)[0][0]
 
         if best_loss > config_loss:
             best_config = config
@@ -219,13 +216,13 @@ def search_params(base_config, train_set, validation_set):
             print("Best loss:", best_loss)
             print("Best config:", best_config.to_string())
 
-
     return best_config
 
 
-def run_loop(modes, models, summary_ops=None, log=False, save=False):
+def run_loop(session, modes, models, summary_ops=None, log=False, save=False):
     """
     Runs models for the specified number of epochs.
+    :param session: MonitoredTrainingSession to use
     :param modes: List of modes. Whether to train, evaluate, or test
     :param models: List of models
     :param summary_ops: List of summary operations with one operation per model, or None.
@@ -241,48 +238,42 @@ def run_loop(modes, models, summary_ops=None, log=False, save=False):
     representative_config = models[0].config  # used for variables that are assumed to be the same between models
 
     # Create hooks for session
-    hooks = []
-
-    # Saver hook that allows the monitored session to automatically create checkpoints
     if save:
         saver_hook = tf.train.CheckpointSaverHook(checkpoint_dir=save_path, save_steps=10000)
-        hooks.append(saver_hook)
+        session.hooks.append(saver_hook)
 
-    with tf.train.MonitoredTrainingSession(hooks=hooks) as session:
-        # session = tf_debug.LocalCLIDebugWrapperSession(session)  # Enable debug
+    writers = []
+    losses = []
+    for i in range(nr_models):
+        losses.append([])
+        if log:
+            writers.append(
+                tf.summary.FileWriter(logs_path + os.sep + Mode.to_string(modes[i]).lower(), session.graph))
+        else:
+            writers.append(None)
 
-        writers = []
-        losses = []
-        for i in range(nr_models):
-            losses.append([])
-            if log:
-                writers.append(
-                    tf.summary.FileWriter(logs_path + os.sep + Mode.to_string(modes[i]).lower(), session.graph))
-            else:
-                writers.append(None)
+    for i in range(representative_config.nr_epochs):
+        lr_decay = representative_config.lr_decay ** max(i + 1 - representative_config.nr_epochs_with_max_lr, 0)
 
-        for i in range(representative_config.max_max_epoch):
-            lr_decay = representative_config.lr_decay ** max(i + 1 - representative_config.max_epoch, 0)
+        for m in range(nr_models):
+            model = models[m]
+            if modes[m] == Mode.train:
+                model.assign_lr(session, representative_config.learning_rate * lr_decay)
+                print("Epoch: %d Learning rate: %.3f" % (i + 1, session.run(model.lr)))
+            perplexity = run_epoch(session, model,
+                                   writer=writers[m],
+                                   summary_op=summary_ops[m],
+                                   eval_op=model.train_op if modes[m] == Mode.train else None)
+            losses[m].append(perplexity)
+            print("(", Mode.to_string(modes[m]), ") Epoch: %d Perplexity: %.3f" % (i + 1, perplexity))
 
-            for m in range(nr_models):
-                model = models[m]
-                if modes[m] == Mode.train:
-                    model.assign_lr(session, representative_config.learning_rate * lr_decay)
-                    print("Epoch: %d Learning rate: %.3f" % (i + 1, session.run(model.lr)))
-                perplexity = run_epoch(session, model,
-                                       writer=writers[m],
-                                       summary_op=summary_ops[m],
-                                       eval_op=model.train_op if modes[m] == Mode.train else None)
-                losses[m].append(perplexity)
-                print("Epoch: %d Perplexity: %.3f" % (i + 1, perplexity))
+    if save:
+        print("Saving model to %s." % save_path)
+        saver = tf.train.Saver()
+        saver.save(session, save_path,
+                   global_step=tf.train.global_step(session, tf.train.get_or_create_global_step()))
 
-        if save:
-            print("Saving model to %s." % save_path)
-            saver = tf.train.Saver()
-            saver.save(session, save_path,
-                       global_step=tf.train.global_step(session, tf.train.get_or_create_global_step()))
-
-        return losses
+    return losses
 
 
 def main(_):
@@ -292,10 +283,22 @@ def main(_):
     config = DefaultConfig()
     config.vocab_size = len(vocab) + (0 not in vocab)  # Add padding token, if not already used
 
-    with tf.Graph().as_default():
-        config = search_params(GridSearchConfig(), train_set, validation_set)
+    search_nr_epochs_with_max_lr = 2
+    nr_epochs_with_max_lr = 5
+    search_nr_epochs = 6
+    nr_epochs = 30
 
-        if False:  # Train & test
+    with tf.Graph().as_default():
+        search_config = GridSearchConfig()
+        search_config.nr_epochs_with_max_lr = search_nr_epochs_with_max_lr
+        search_config.nr_epochs = search_nr_epochs
+
+        config = search_params(search_config, train_set, validation_set)
+
+        config.nr_epochs_with_max_lr = nr_epochs_with_max_lr
+        config.nr_epochs = nr_epochs
+
+        if True:  # Train & test
             mtrain, train_summary_op = instantiate_model(
                 mode=Mode.train,
                 config=config,
@@ -314,9 +317,13 @@ def main(_):
                 data_set=test_set,
                 reuse=False)
 
-            run_loop([Mode.train], [mtrain], [train_summary_op], log=True, save=True)
-
-            run_loop([Mode.test], [mtest], [test_summary_op])
+            g_init = tf.global_variables_initializer()
+            l_init = tf.local_variables_initializer()
+            with tf.train.MonitoredTrainingSession() as session:
+                # session = tf_debug.LocalCLIDebugWrapperSession(session)  # Enable debug
+                session.run([g_init, l_init])
+                run_loop([Mode.train], [mtrain], [train_summary_op], log=True, save=True)
+                run_loop([Mode.test], [mtest], [test_summary_op])
 
 
 if __name__ == "__main__":
