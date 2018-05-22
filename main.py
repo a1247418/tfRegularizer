@@ -76,7 +76,6 @@ def run_epoch(sess, model, writer=None, summary_op=None, eval_op=None):
             # Break out of loop if there is no more batch in the dataset
             break
 
-        # num_steps = example_batch.shape[1]
         batch_size = example_batch.shape[0]
 
         state = sess.run(model.initial_state, {model.batch_size: batch_size})
@@ -90,61 +89,53 @@ def run_epoch(sess, model, writer=None, summary_op=None, eval_op=None):
         vals = sess.run(fetches, feed_dict)
         cost = vals["cost"]
         num_steps_in_batch = vals["num_steps_in_batch"]
-        # state = vals["final_state"]
 
         costs += cost
         total_steps += num_steps_in_batch
 
         if step > 0 and step % 500 == 0:
-            '''
-            print(vals["targets"])
-            print(np.argmax(vals["logits"], axis=2))
-            print(vals["mask"])
-            print(vals["loss"])
-            '''
-
-            print(get_time_str(), ": Batch %.3f, perplexity: %.3f" %
+            print(get_time_str(), ": Batch %d, perplexity: %.3f" %
                   (step, np.exp(costs/total_steps)))
             if summary_op is not None:
-                # writer = SummaryWriterCache.get(logs_path)
                 writer.add_summary(vals["summary_op"])
                 writer.flush()
 
         step += 1
 
-        # summary_writer = SummaryWriterCache.get(logs_path)
-        # summary_writer.add_summary(vals["summary"])
-
     return np.exp(costs/total_steps)
 
 
-def instantiate_model(mode, config, data_set, reuse):
+def instantiate_model(mode, config, data_set):
     """
     Instantiates the model with the given configuration and data.
     :param mode: Mode enum specifying train/test/validation.
     :param config:
     :param data_set: a tf.data.dataset
-    :param reuse: reuse graph
     :return: model, summary operation
     """
     name = Mode.to_string(mode)
+
     initializer = tf.random_uniform_initializer(-config.init_scale, config.init_scale)
 
-    with tf.name_scope(name):
+    with tf.name_scope(name=name):
         model_input = ModelInput(
             config=config,
-            data=data_set,
-            name=name+"Input")
+            data=data_set)
         with tf.variable_scope("Model", reuse=tf.AUTO_REUSE, initializer=initializer):
             model = SeqModel(
                 is_training=(mode == Mode.train),
                 config=config,
                 dataset=model_input)
-            summary = tf.summary.scalar(name+" Loss", model.normalized_cost)
 
+            summary = tf.summary.scalar(name+" Loss", model.normalized_cost)
             if mode == Mode.train:
                 summ_lr = tf.summary.scalar("Learning Rate", model.lr)
                 summary = tf.summary.merge([summary, summ_lr])
+            summ_layers = tf.summary.scalar("Layers", model.config.num_layers)
+            summ_bs = tf.summary.scalar("Batch Size", model.config.batch_size)
+            summ_grad_norm = tf.summary.scalar("Gradient Norm", model.config.max_grad_norm)
+            summ_keep_prob = tf.summary.scalar("Dropout Keep Probability", model.config.keep_prob)
+            summary = tf.summary.merge([summary, summ_layers, summ_bs, summ_grad_norm, summ_keep_prob])
 
     return model, summary
 
@@ -176,8 +167,8 @@ def search_params(base_config, train_set, validation_set):
                 config.parameters[param] = base_config.parameters[param]
 
     print("Generated", len(configs), "parameter configurations:")
-    for config in configs:
-        print(config.to_string())
+    for i in range(len(configs)):
+        print(str(i), configs[i].to_string())
 
     # Train and validate configs
     best_config = None
@@ -186,29 +177,29 @@ def search_params(base_config, train_set, validation_set):
     counter = 0
     for config in configs:
         counter += 1
-        print("\n############################### Running Configuration", counter, "of ", len(configs), "###############################")
-        mtrain, train_summary_op = instantiate_model(
-            mode=Mode.train,
-            config=config,
-            data_set=train_set,
-            reuse=False)
+        print("\n############################### Running Configuration", counter, "of", len(configs), "###############################")
 
         validation_config = copy.deepcopy(config)
         validation_config.nr_epochs = 1
 
-        mvalid, val_summary_op = instantiate_model(
-            mode=Mode.validate,
-            config=validation_config,
-            data_set=validation_set,
-            reuse=True)
+        with tf.Graph().as_default():
+            mtrain, train_summary_op = instantiate_model(
+                mode=Mode.train,
+                config=config,
+                data_set=train_set)
 
-        g_init = tf.global_variables_initializer()
-        l_init = tf.local_variables_initializer()
-        with tf.train.MonitoredTrainingSession() as session:
-            # session = tf_debug.LocalCLIDebugWrapperSession(session)  # Enable debug
-            session.run([g_init, l_init])
-            run_loop(session, [Mode.train], [mtrain], [train_summary_op], log=True, save=False)
-            config_loss = run_loop(session, [Mode.validate], [mvalid], [val_summary_op], log=True, save=False)[0][0]
+            mvalid, val_summary_op = instantiate_model(
+                mode=Mode.validate,
+                config=validation_config,
+                data_set=validation_set)
+
+            g_init = tf.global_variables_initializer()
+            l_init = tf.local_variables_initializer()
+
+            with tf.train.MonitoredTrainingSession() as session:
+                session.run([g_init, l_init])
+                run_loop(session, [Mode.train], [mtrain], [train_summary_op], log=True, save=False, name_modifier=str(counter))
+                config_loss = run_loop(session, [Mode.validate], [mvalid], [val_summary_op], log=True, save=False, name_modifier=str(counter))[0][0]
 
         if best_loss > config_loss:
             best_config = config
@@ -216,10 +207,13 @@ def search_params(base_config, train_set, validation_set):
             print("Best loss:", best_loss)
             print("Best config:", best_config.to_string())
 
+    print("Best total loss:", best_loss)
+    print("Best total config:", best_config.to_string())
+
     return best_config
 
 
-def run_loop(session, modes, models, summary_ops=None, log=False, save=False):
+def run_loop(session, modes, models, summary_ops=None, log=False, save=False, name_modifier=""):
     """
     Runs models for the specified number of epochs.
     :param session: MonitoredTrainingSession to use
@@ -229,6 +223,7 @@ def run_loop(session, modes, models, summary_ops=None, log=False, save=False):
     :param log: Whether to write summaries for tensorboard.
     :param save: Whether to write checkpoints and save the final models.
     :return: List of lists, where each sub-list is the loss/epoch.
+    :param: Suffix to identify the model in tensorboard. Creates a subdirectory.
     """
     assert (len(modes) == len(models))
     assert (summary_ops is None or len(summary_ops) == len(models))
@@ -248,7 +243,8 @@ def run_loop(session, modes, models, summary_ops=None, log=False, save=False):
         losses.append([])
         if log:
             writers.append(
-                tf.summary.FileWriter(logs_path + os.sep + Mode.to_string(modes[i]).lower(), session.graph))
+                tf.summary.FileWriter(logs_path + os.sep + Mode.to_string(modes[i]).lower() + name_modifier,
+                                      session.graph))
         else:
             writers.append(None)
 
@@ -257,15 +253,16 @@ def run_loop(session, modes, models, summary_ops=None, log=False, save=False):
 
         for m in range(nr_models):
             model = models[m]
+            lr_string = ""
             if modes[m] == Mode.train:
                 model.assign_lr(session, representative_config.learning_rate * lr_decay)
-                print("Epoch: %d Learning rate: %.3f" % (i + 1, session.run(model.lr)))
+                lr_string = "Learning Rate"+str(session.run(model.lr))
             perplexity = run_epoch(session, model,
                                    writer=writers[m],
                                    summary_op=summary_ops[m],
                                    eval_op=model.train_op if modes[m] == Mode.train else None)
             losses[m].append(perplexity)
-            print("(", Mode.to_string(modes[m]), ") Epoch: %d Perplexity: %.3f" % (i + 1, perplexity))
+            print("(", Mode.to_string(modes[m]), ") Epoch: %d Perplexity: %.3f" % (i + 1, perplexity), lr_string)
 
     if save:
         print("Saving model to %s." % save_path)
@@ -288,42 +285,38 @@ def main(_):
     search_nr_epochs = 6
     nr_epochs = 30
 
-    with tf.Graph().as_default():
-        search_config = GridSearchConfig()
-        search_config.nr_epochs_with_max_lr = search_nr_epochs_with_max_lr
-        search_config.nr_epochs = search_nr_epochs
+    search_config = GridSearchConfig()
+    search_config.nr_epochs_with_max_lr = search_nr_epochs_with_max_lr
+    search_config.nr_epochs = search_nr_epochs
 
-        config = search_params(search_config, train_set, validation_set)
+    config = search_params(search_config, train_set, validation_set)
 
-        config.nr_epochs_with_max_lr = nr_epochs_with_max_lr
-        config.nr_epochs = nr_epochs
+    config.nr_epochs_with_max_lr = nr_epochs_with_max_lr
+    config.nr_epochs = nr_epochs
 
-        if True:  # Train & test
-            mtrain, train_summary_op = instantiate_model(
-                mode=Mode.train,
-                config=config,
-                data_set=train_set,
-                reuse=True)
+    if True:  # Train & test
+        mtrain, train_summary_op = instantiate_model(
+            mode=Mode.train,
+            config=config,
+            data_set=train_set)
 
-            mvalid, val_summary_op = instantiate_model(
-                mode=Mode.validate,
-                config=config,
-                data_set=validation_set,
-                reuse=False)
+        mvalid, val_summary_op = instantiate_model(
+            mode=Mode.validate,
+            config=config,
+            data_set=validation_set)
 
-            mtest, test_summary_op = instantiate_model(
-                mode=Mode.test,
-                config=config,
-                data_set=test_set,
-                reuse=False)
+        mtest, test_summary_op = instantiate_model(
+            mode=Mode.test,
+            config=config,
+            data_set=test_set)
 
+        with tf.Graph().as_default():
             g_init = tf.global_variables_initializer()
             l_init = tf.local_variables_initializer()
             with tf.train.MonitoredTrainingSession() as session:
-                # session = tf_debug.LocalCLIDebugWrapperSession(session)  # Enable debug
                 session.run([g_init, l_init])
-                run_loop([Mode.train], [mtrain], [train_summary_op], log=True, save=True)
-                run_loop([Mode.test], [mtest], [test_summary_op])
+                run_loop(session, [Mode.train], [mtrain], [train_summary_op], log=True, save=True)
+                run_loop(session, [Mode.test], [mtest], [test_summary_op])
 
 
 if __name__ == "__main__":

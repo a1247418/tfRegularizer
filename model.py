@@ -34,7 +34,7 @@ class SeqModel(object):
         self._config = config
         hidden_size = config.hidden_size
         vocab_size = config.vocab_size
-        self._batch = tf.placeholder(tf.int32, shape=(None, None))  # Holds symbol IDs: [batch_size, num_steps]
+        self._batch = tf.placeholder(tf.int32, shape=(None, None), name="batch")  # Holds symbol IDs: [batch_size, num_steps]
         num_steps = tf.shape(self._batch)[1]
 
         # Embedding
@@ -56,7 +56,7 @@ class SeqModel(object):
         softmax_b = tf.get_variable("softmax_b", [vocab_size], dtype=data_type())
         # Add bias
         output = tf.reshape(output, [-1, hidden_size])
-        logits = tf.nn.xw_plus_b(output, softmax_w, softmax_b)
+        logits = tf.nn.xw_plus_b(output, softmax_w, softmax_b, name="xW_plus_b")
         # Reshape logits to be a 3-D tensor for sequence loss
         logits = tf.reshape(logits, [self._batch_size, num_steps, vocab_size])
 
@@ -106,7 +106,7 @@ class SeqModel(object):
         # Forget bias set to 1
         return tf.contrib.rnn.BasicLSTMCell(
             config.hidden_size, forget_bias=1.0, state_is_tuple=True,
-            reuse=not is_training)
+            reuse= tf.AUTO_REUSE)  # not is_training)
         
     def _build_rnn_graph_lstm(self, inputs, config, is_training):
         """Build the inference graph using canonical LSTM cells."""
@@ -226,9 +226,10 @@ class SeqModel(object):
     def config(self):
         return self._config
 
+
 class ModelInput(object):
     """Encapsulates parameters and data."""
-    def __init__(self, config, data, name = None):
+    def __init__(self, config, data):
         self.batch_size = batch_size = config.batch_size
         self.dataset = ModelInput._prepare_data(data, batch_size)
         self.iterator = self.dataset.make_initializable_iterator()
