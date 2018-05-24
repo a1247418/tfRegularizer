@@ -145,10 +145,10 @@ class GridSearchConfig(Config):
     def __init__(self):
         Config.__init__(self)
         self.init_scale = 0.1
-        self.learning_rate = [0.0001, 0.005, 0.01, 0.05, 0.25, 0.5]
+        self.learning_rate = [0.001, 0.005, 0.01, 0.05, 0.25, 0.4]
         self.max_grad_norm = np.arange(3, 5, 1)
         self.num_layers = np.arange(1, 3, 1)
-        self.hidden_size = 2
+        self.hidden_size = [2, 5, 10, 15]
         self.nr_epochs_with_max_lr = 3
         self.nr_epochs = 5
         self.keep_prob = [0.8, 1]

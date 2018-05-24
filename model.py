@@ -1,6 +1,6 @@
 import tensorflow as tf
 from enum import Enum
-
+from utils import log
 
 def data_type():
     return tf.float16 if tf.flags.FLAGS.use_fp16 else tf.float32
@@ -238,7 +238,7 @@ class ModelInput(object):
     @staticmethod
     def _prepare_data(data, batch_size):
         """Takes data array and returns a batched, 0-padded and shuffled dataset."""
-        print("Preparing data set.")
+        log("Preparing data set.")
 
         def data_generator():
             for element in data: yield element
@@ -249,6 +249,6 @@ class ModelInput(object):
         dataset = dataset.padded_batch(batch_size, padded_shapes=[None])
         dataset = dataset.prefetch(max(2, tf.contrib.data.AUTOTUNE))   # must be the last operaton of the pipeline
 
-        print("Done preparing data set.")
+        log("Done preparing data set.")
 
         return dataset

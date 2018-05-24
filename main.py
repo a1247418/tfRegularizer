@@ -4,29 +4,19 @@ https://github.com/tensorflow/models/blob/master/tutorials/rnn/ptb/*.py
 """
 
 import os
-import time
 import copy
 import collections
-from enum import Enum
 import numpy as np
 import tensorflow as tf
 import dataReader
 from model import SeqModel, ModelType, ModelInput, Mode
 from configurations import Config, DefaultConfig, GridSearchConfig
-from tensorflow.python.training.summary_io import SummaryWriterCache
-from tensorflow.python import debug as tf_debug
+from utils import save_path, log_path, data_path, log
 
-
-PRINT_OUT = True
 DATA_FROM_SAVES = True
 
 np.random.seed(1)
 tf.set_random_seed(1)
-
-path = os.getcwd()
-data_path = path + os.sep + "data"
-save_path = path + os.sep + "saves"
-logs_path = path + os.sep + "logs"
 
 flags = tf.flags
 logging = tf.logging
@@ -38,10 +28,6 @@ flags.DEFINE_bool("use_fp16", False,
 
 def data_type():
     return tf.float16 if tf.flags.FLAGS.use_fp16 else tf.float32
-
-
-def get_time_str():
-    return time.strftime("%d.%m. %H:%M:%S", time.gmtime())
 
 
 def run_epoch(sess, model, writer=None, summary_op=None, eval_op=None):
@@ -93,9 +79,8 @@ def run_epoch(sess, model, writer=None, summary_op=None, eval_op=None):
         costs += cost
         total_steps += num_steps_in_batch
 
-        if step > 0 and step % 500 == 0:
-            print(get_time_str(), ": Batch %d, perplexity: %.3f" %
-                  (step, np.exp(costs/total_steps)))
+        if step % 1000 == 0:
+            log("Batch %d, perplexity: %.3f" % (step, np.exp(costs/total_steps)))
             if summary_op is not None:
                 writer.add_summary(vals["summary_op"])
                 writer.flush()
@@ -135,7 +120,8 @@ def instantiate_model(mode, config, data_set):
             summ_bs = tf.summary.scalar("Batch Size", model.config.batch_size)
             summ_grad_norm = tf.summary.scalar("Gradient Norm", model.config.max_grad_norm)
             summ_keep_prob = tf.summary.scalar("Dropout Keep Probability", model.config.keep_prob)
-            summary = tf.summary.merge([summary, summ_layers, summ_bs, summ_grad_norm, summ_keep_prob])
+            summ_hidden_size = tf.summary.scalar("State Size", model.config.hidden_size)
+            summary = tf.summary.merge([summary, summ_layers, summ_bs, summ_grad_norm, summ_keep_prob, summ_hidden_size])
 
     return model, summary
 
@@ -166,9 +152,9 @@ def search_params(base_config, train_set, validation_set):
             for config in configs:
                 config.parameters[param] = base_config.parameters[param]
 
-    print("Generated", len(configs), "parameter configurations:")
+    log("Generated %d parameter configurations:" % len(configs))
     for i in range(len(configs)):
-        print(str(i), configs[i].to_string())
+        log(str(i)+" "+configs[i].to_string())
 
     # Train and validate configs
     best_config = None
@@ -177,7 +163,7 @@ def search_params(base_config, train_set, validation_set):
     counter = 0
     for config in configs:
         counter += 1
-        print("\n############################### Running Configuration", counter, "of", len(configs), "###############################")
+        log("############################### Running Configuration %d of %d ###############################" % (counter, len(configs)))
 
         validation_config = copy.deepcopy(config)
         validation_config.nr_epochs = 1
@@ -204,13 +190,45 @@ def search_params(base_config, train_set, validation_set):
         if best_loss > config_loss:
             best_config = config
             best_loss = config_loss
-            print("Best loss:", best_loss)
-            print("Best config:", best_config.to_string())
+            log("Best loss: %.4f" % best_loss)
+            log("Best config:"+best_config.to_string())
 
-    print("Best total loss:", best_loss)
-    print("Best total config:", best_config.to_string())
+    log("Best total loss: %.4f" % best_loss)
+    log("Best total config: "+best_config.to_string())
 
     return best_config
+
+
+def train_and_test(config, train_set, test_set, name_modifier=""):
+    """
+    Trains the model with the give configuration, tests it, and returns the model and the testing loss.
+    :param config: Config to use for both training and testing.
+    :param train_set: Training data
+    :param test_set: Testing data
+    :param name_modifier: Suffix to be appendet to the model's namestring (e.g. for tensorboard folder structure)
+    :return: loss
+    """
+    mtrain, train_summary_op = instantiate_model(
+        mode=Mode.train,
+        config=config,
+        data_set=train_set)
+
+    mtest, test_summary_op = instantiate_model(
+        mode=Mode.test,
+        config=config,
+        data_set=test_set)
+
+    with tf.Graph().as_default():
+        g_init = tf.global_variables_initializer()
+        l_init = tf.local_variables_initializer()
+        with tf.train.MonitoredTrainingSession() as session:
+            session.run([g_init, l_init])
+            run_loop(session, [Mode.train], [mtrain], [train_summary_op],
+                     log=True, save=True, name_modifier=name_modifier)
+            loss = run_loop(session, [Mode.test], [mtest], [test_summary_op],
+                            log=True, save=False, name_modifier=name_modifier)
+
+    return loss
 
 
 def run_loop(session, modes, models, summary_ops=None, log=False, save=False, name_modifier=""):
@@ -222,8 +240,8 @@ def run_loop(session, modes, models, summary_ops=None, log=False, save=False, na
     :param summary_ops: List of summary operations with one operation per model, or None.
     :param log: Whether to write summaries for tensorboard.
     :param save: Whether to write checkpoints and save the final models.
+    :param name_modifier: Suffix to identify the model in tensorboard. Creates a subdirectory.
     :return: List of lists, where each sub-list is the loss/epoch.
-    :param: Suffix to identify the model in tensorboard. Creates a subdirectory.
     """
     assert (len(modes) == len(models))
     assert (summary_ops is None or len(summary_ops) == len(models))
@@ -243,7 +261,7 @@ def run_loop(session, modes, models, summary_ops=None, log=False, save=False, na
         losses.append([])
         if log:
             writers.append(
-                tf.summary.FileWriter(logs_path + os.sep + Mode.to_string(modes[i]).lower() + name_modifier,
+                tf.summary.FileWriter(log_path + os.sep + Mode.to_string(modes[i]).lower() + name_modifier,
                                       session.graph))
         else:
             writers.append(None)
@@ -262,10 +280,10 @@ def run_loop(session, modes, models, summary_ops=None, log=False, save=False, na
                                    summary_op=summary_ops[m],
                                    eval_op=model.train_op if modes[m] == Mode.train else None)
             losses[m].append(perplexity)
-            print("(", Mode.to_string(modes[m]), ") Epoch: %d Perplexity: %.3f" % (i + 1, perplexity), lr_string)
+            # log("(", Mode.to_string(modes[m]), ") Epoch: %d Perplexity: %.3f" % (i + 1, perplexity), lr_string)
 
     if save:
-        print("Saving model to %s." % save_path)
+        log("Saving model to %s." % save_path)
         saver = tf.train.Saver()
         saver.save(session, save_path,
                    global_step=tf.train.global_step(session, tf.train.get_or_create_global_step()))
@@ -275,17 +293,24 @@ def run_loop(session, modes, models, summary_ops=None, log=False, save=False, na
 
 def main(_):
     train_set, validation_set, test_set, vocab, char2int = \
-        dataReader.loadDataFromSaves() if DATA_FROM_SAVES else \
-        dataReader.loadDataFromSource()
+        dataReader.load_data_from_saves() if DATA_FROM_SAVES else \
+        dataReader.load_data_from_source()
+
+    log("Train set size: %d" % len(train_set))
+    log("Validation set size: %d" % len(validation_set))
+    log("Test set size: %d" % len(test_set))
+    log("Vocabulary size: %d" % len(vocab))
+
     config = DefaultConfig()
     config.vocab_size = len(vocab) + (0 not in vocab)  # Add padding token, if not already used
 
-    search_nr_epochs_with_max_lr = 2
-    nr_epochs_with_max_lr = 5
+    search_nr_epochs_with_max_lr = 5
+    nr_epochs_with_max_lr = 20
     search_nr_epochs = 6
     nr_epochs = 30
 
     search_config = GridSearchConfig()
+
     search_config.nr_epochs_with_max_lr = search_nr_epochs_with_max_lr
     search_config.nr_epochs = search_nr_epochs
 
@@ -294,29 +319,7 @@ def main(_):
     config.nr_epochs_with_max_lr = nr_epochs_with_max_lr
     config.nr_epochs = nr_epochs
 
-    if True:  # Train & test
-        mtrain, train_summary_op = instantiate_model(
-            mode=Mode.train,
-            config=config,
-            data_set=train_set)
-
-        mvalid, val_summary_op = instantiate_model(
-            mode=Mode.validate,
-            config=config,
-            data_set=validation_set)
-
-        mtest, test_summary_op = instantiate_model(
-            mode=Mode.test,
-            config=config,
-            data_set=test_set)
-
-        with tf.Graph().as_default():
-            g_init = tf.global_variables_initializer()
-            l_init = tf.local_variables_initializer()
-            with tf.train.MonitoredTrainingSession() as session:
-                session.run([g_init, l_init])
-                run_loop(session, [Mode.train], [mtrain], [train_summary_op], log=True, save=True)
-                run_loop(session, [Mode.test], [mtest], [test_summary_op])
+    train_and_test(config=config, train_set=train_set+validation_set, test_set=test_set)
 
 
 if __name__ == "__main__":
