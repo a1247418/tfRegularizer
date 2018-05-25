@@ -360,8 +360,8 @@ def main(_):
     config = DefaultConfig()
     config.vocab_size = len(vocab) + (0 not in vocab)  # Add padding token, if not already used
 
-    search_nr_epochs = 1#20
-    nr_epochs = 1#30
+    search_nr_epochs = 20
+    nr_epochs = 30
 
     search_config = GridSearchConfig()
 
