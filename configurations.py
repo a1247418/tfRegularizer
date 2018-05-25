@@ -12,7 +12,6 @@ class Config(object):
             "max_grad_norm": None,
             "num_layers": None,
             "hidden_size": None,
-            "max_epoch": None,  # nr epochs with max learning rate
             "max_max_epoch": None,
             "keep_prob": None,
             "lr_decay": None,
@@ -68,14 +67,6 @@ class Config(object):
         self.parameters["hidden_size"] = hidden_size
 
     @property
-    def nr_epochs_with_max_lr(self):
-        return self.parameters["max_epoch"]
-
-    @nr_epochs_with_max_lr.setter
-    def nr_epochs_with_max_lr(self, max_epoch):
-        self.parameters["max_epoch"] = max_epoch
-
-    @property
     def nr_epochs(self):
         return self.parameters["max_max_epoch"]
 
@@ -128,11 +119,10 @@ class DefaultConfig(Config):
     def __init__(self):
         Config.__init__(self)
         self.init_scale = 0.1
-        self.learning_rate = 0.8
+        self.learning_rate = 0.001
         self.max_grad_norm = 3
         self.num_layers = 1
         self.hidden_size = 2
-        self.nr_epochs_with_max_lr = 5
         self.nr_epochs = 30
         self.keep_prob = 0.8
         self.lr_decay = 0.9
@@ -145,14 +135,29 @@ class GridSearchConfig(Config):
     def __init__(self):
         Config.__init__(self)
         self.init_scale = 0.1
-        self.learning_rate = [0.001, 0.005, 0.01, 0.05, 0.25, 0.4]
-        self.max_grad_norm = np.arange(3, 5, 1)
-        self.num_layers = np.arange(1, 3, 1)
-        self.hidden_size = [2, 4, 8, 16, 32]
-        self.nr_epochs_with_max_lr = 3
+        self.learning_rate = 0.001
+        self.max_grad_norm = 5#np.arange(3, 5, 1)
+        self.num_layers = 1#np.arange(1, 3, 1)
+        self.hidden_size = 4#[2, 4, 8, 16, 32]
         self.nr_epochs = 5
-        self.keep_prob = [0.8, 1]
+        self.keep_prob = 1#[0.8, 1]
         self.lr_decay = 0.9
-        self.batch_size = [16, 32, 64, 128]
+        self.batch_size = [1000,500]#[8, 16, 32, 64, 128, 256]
+        self.vocab_size = 29
+        self.learning_mode = ModelType.tf
+
+
+class RandomSearchConfig(Config):
+    def __init__(self):
+        Config.__init__(self)
+        self.init_scale = 0.1
+        self.learning_rate = 0.001
+        self.max_grad_norm = np.arange(3, 10)
+        self.num_layers = np.arange(1, 4)
+        self.hidden_size = np.arange(2, 128, 5)
+        self.nr_epochs = 5
+        self.keep_prob = np.arange(0.7, 1,0.1)
+        self.lr_decay = 0.9
+        self.batch_size = [8, 16, 32, 64, 128, 256, 512]
         self.vocab_size = 29
         self.learning_mode = ModelType.tf

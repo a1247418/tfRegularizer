@@ -89,24 +89,20 @@ class SeqModel(object):
 
         # Optimize, if is_training
         if is_training:
-            self._lr = tf.Variable(0.0, trainable=False)
             tvars = tf.trainable_variables()
             grads, _ = tf.clip_by_global_norm(tf.gradients(self._cost, tvars),
                                               config.max_grad_norm)
-            optimizer = tf.train.GradientDescentOptimizer(self._lr)
+            optimizer = tf.train.AdamOptimizer(config.learning_rate)
             self._train_op = optimizer.apply_gradients(
                 zip(grads, tvars),
                 global_step=tf.train.get_or_create_global_step())
 
-            self._new_lr = tf.placeholder(
-                tf.float32, shape=[], name="new_learning_rate")
-            self._lr_update = tf.assign(self._lr, self._new_lr)
 
     def _get_lstm_cell(self, config, is_training):
         # Forget bias set to 1
         return tf.contrib.rnn.BasicLSTMCell(
             config.hidden_size, forget_bias=1.0, state_is_tuple=True,
-            reuse= tf.AUTO_REUSE)  # not is_training)
+            reuse=tf.AUTO_REUSE)  # not is_training)
         
     def _build_rnn_graph_lstm(self, inputs, config, is_training):
         """Build the inference graph using canonical LSTM cells."""
@@ -128,10 +124,6 @@ class SeqModel(object):
                     initial_state=self._initial_state,
                     time_major=False)
         return outputs, state
-
-    def assign_lr(self, session, lr_value):
-        """Updates learning rate."""
-        session.run(self._lr_update, feed_dict={self._new_lr: lr_value})
 
     """
     def export_ops(self, name):
@@ -203,7 +195,7 @@ class SeqModel(object):
 
     @property
     def lr(self):
-        return self._lr
+        return self.config.learning_rate
 
     """
     @property

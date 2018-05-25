@@ -54,3 +54,4 @@ saves/*
 logs/*
 .ipynb_checkpoints
 old_*
+lsf.o*
