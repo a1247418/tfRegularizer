@@ -59,6 +59,7 @@ def run_epoch(sess, model, writer=None, summary_op=None, eval_op=None):
             # Fetch next batch
             example_batch = sess.run(model.dataset.next_element)
         except tf.errors.OutOfRangeError:
+            # log("Batch %d, perplexity: %.3f" % (step, np.exp(costs/total_steps)))
             # Break out of loop if there is no more batch in the dataset
             break
 
@@ -80,7 +81,7 @@ def run_epoch(sess, model, writer=None, summary_op=None, eval_op=None):
         total_steps += num_steps_in_batch
 
         if step % 1000 == 0:
-            log("Batch %d, perplexity: %.3f" % (step, np.exp(costs/total_steps)))
+            # log("Batch %d, perplexity: %.3f" % (step, np.exp(costs/total_steps)))
             if summary_op is not None:
                 writer.add_summary(vals["summary_op"])
                 writer.flush()
@@ -184,8 +185,8 @@ def search_params(base_config, train_set, validation_set):
 
             with tf.train.MonitoredTrainingSession() as session:
                 session.run([g_init, l_init])
-                run_loop(session, [Mode.train], [mtrain], [train_summary_op], log=True, save=False, name_modifier=str(counter))
-                config_loss = run_loop(session, [Mode.validate], [mvalid], [val_summary_op], log=True, save=False, name_modifier=str(counter))[0][0]
+                run_loop(session, [Mode.train], [mtrain], [train_summary_op], logging=True, save=False, name_modifier=str(counter))
+                config_loss = run_loop(session, [Mode.validate], [mvalid], [val_summary_op], logging=True, save=False, name_modifier=str(counter))[0][0]
 
         if best_loss > config_loss:
             best_config = config
@@ -224,28 +225,28 @@ def train_and_test(config, train_set, test_set, name_modifier=""):
         with tf.train.MonitoredTrainingSession() as session:
             session.run([g_init, l_init])
             run_loop(session, [Mode.train], [mtrain], [train_summary_op],
-                     log=True, save=True, name_modifier=name_modifier)
+                     logging=True, save=True, name_modifier=name_modifier)
             loss = run_loop(session, [Mode.test], [mtest], [test_summary_op],
-                            log=True, save=False, name_modifier=name_modifier)
+                            logging=True, save=False, name_modifier=name_modifier)
 
     return loss
 
 
-def run_loop(session, modes, models, summary_ops=None, log=False, save=False, name_modifier=""):
+def run_loop(session, modes, models, summary_ops=None, logging=False, save=False, name_modifier=""):
     """
     Runs models for the specified number of epochs.
     :param session: MonitoredTrainingSession to use
     :param modes: List of modes. Whether to train, evaluate, or test
     :param models: List of models
     :param summary_ops: List of summary operations with one operation per model, or None.
-    :param log: Whether to write summaries for tensorboard.
+    :param logging: Whether to write summaries for tensorboard.
     :param save: Whether to write checkpoints and save the final models.
     :param name_modifier: Suffix to identify the model in tensorboard. Creates a subdirectory.
     :return: List of lists, where each sub-list is the loss/epoch.
     """
     assert (len(modes) == len(models))
     assert (summary_ops is None or len(summary_ops) == len(models))
-    assert (summary_ops is None or log)
+    assert (summary_ops is None or logging)
 
     nr_models = len(modes)
     representative_config = models[0].config  # used for variables that are assumed to be the same between models
@@ -259,7 +260,7 @@ def run_loop(session, modes, models, summary_ops=None, log=False, save=False, na
     losses = []
     for i in range(nr_models):
         losses.append([])
-        if log:
+        if logging:
             writers.append(
                 tf.summary.FileWriter(log_path + os.sep + Mode.to_string(modes[i]).lower() + name_modifier,
                                       session.graph))
@@ -274,13 +275,13 @@ def run_loop(session, modes, models, summary_ops=None, log=False, save=False, na
             lr_string = ""
             if modes[m] == Mode.train:
                 model.assign_lr(session, representative_config.learning_rate * lr_decay)
-                lr_string = "Learning Rate"+str(session.run(model.lr))
+                lr_string = "Learning Rate "+str(session.run(model.lr))
             perplexity = run_epoch(session, model,
                                    writer=writers[m],
                                    summary_op=summary_ops[m],
                                    eval_op=model.train_op if modes[m] == Mode.train else None)
             losses[m].append(perplexity)
-            # log("(", Mode.to_string(modes[m]), ") Epoch: %d Perplexity: %.3f" % (i + 1, perplexity), lr_string)
+            log("%s Epoch: %d Perplexity: %.3f %s" % (Mode.to_string(modes[m]), i + 1, perplexity, lr_string))
 
     if save:
         log("Saving model to %s." % save_path)

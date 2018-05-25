@@ -148,11 +148,11 @@ class GridSearchConfig(Config):
         self.learning_rate = [0.001, 0.005, 0.01, 0.05, 0.25, 0.4]
         self.max_grad_norm = np.arange(3, 5, 1)
         self.num_layers = np.arange(1, 3, 1)
-        self.hidden_size = [2, 5, 10, 15]
+        self.hidden_size = [2, 4, 8, 16, 32]
         self.nr_epochs_with_max_lr = 3
         self.nr_epochs = 5
         self.keep_prob = [0.8, 1]
         self.lr_decay = 0.9
-        self.batch_size = [32, 64, 128]
+        self.batch_size = [16, 32, 64, 128]
         self.vocab_size = 29
         self.learning_mode = ModelType.tf

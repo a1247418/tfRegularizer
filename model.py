@@ -238,7 +238,7 @@ class ModelInput(object):
     @staticmethod
     def _prepare_data(data, batch_size):
         """Takes data array and returns a batched, 0-padded and shuffled dataset."""
-        log("Preparing data set.")
+        log("Preparing data set of length %d with batch size %d" % (len(data), batch_size))
 
         def data_generator():
             for element in data: yield element
@@ -248,7 +248,5 @@ class ModelInput(object):
         # dataset = dataset.repeat(num_epochs)
         dataset = dataset.padded_batch(batch_size, padded_shapes=[None])
         dataset = dataset.prefetch(max(2, tf.contrib.data.AUTOTUNE))   # must be the last operaton of the pipeline
-
-        log("Done preparing data set.")
 
         return dataset

@@ -49,8 +49,8 @@ Temporary Items
 
 
 __pycache__/
-data/
-saves/
-logs/
+data/*
+saves/*
+logs/*
 .ipynb_checkpoints
 old_*

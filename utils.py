@@ -21,5 +21,5 @@ def log(msg):
     if PRINT_OUT:
         print(msg)
     if LOG_TO_FILE:
-        with open(log_path + os.sep + "log" + start_time + ".txt", "a") as file:
+        with open(log_path + os.sep + "log" + start_time + ".txt", "a+") as file:
             file.write(msg+"\n")
